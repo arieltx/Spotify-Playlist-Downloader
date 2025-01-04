@@ -1,3 +1,11 @@
+# instalando o FFmpeg
+## passo 1: instale o FFmpeg
+Acesse o [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases)
+instale a versão para seu dispositivo
+## passo 2: mudando o diretorio no codigo
+1. copie o diretorio onde foi instalado o ffmpeg
+2. na linha 74 **'ffmpeg_location': r'C:\Users\Home\Desktop\Spotify-Playlist-Downloader\ffmpeg-\bin',** Substitua/atualize o caminho do seu FFmpeg
+
 # Configurando o arquivo `config.env`
 
 Para que o projeto funcione corretamente, você precisa configurar suas credenciais do Spotify. Siga os passos abaixo para obter as credenciais e criar o arquivo `config.env`:
