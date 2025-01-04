@@ -23,7 +23,8 @@ Para que o projeto funcione corretamente, você precisa configurar suas credenci
 5. Clique em **Create**.
 6. Após criar o aplicativo, copie os valores de:
    - **Client ID**
-   - **Client Secret** **NOTA** ESTE VALOR FICA OCULTO! 
+   - **Client Secret**
+   -    **NOTA** ESTE VALOR FICA OCULTO! 
 
 ## Passo 2: Criar o arquivo `config.env`
 1. Na raiz do projeto, crie um arquivo chamado `config.env`.
