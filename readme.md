@@ -1,3 +1,10 @@
+# instalando bibliotecas 
+- **em seu terminal digite**
+-       python3 -m pip install -r requirements.txt
+-   ou
+-       pip install -r requirements.txt
+
+-   
 # instalando o FFmpeg
 ## passo 1: instale o FFmpeg
 Acesse o [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases)
