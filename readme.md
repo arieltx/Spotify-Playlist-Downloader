@@ -1,23 +1,15 @@
-# instalando bibliotecas 
-- **em seu terminal digite**
--       python3 -m pip install -r requirements.txt
--   ou
--       pip install -r requirements.txt
-
--   
 # instalando o FFmpeg
 ## passo 1: instale o FFmpeg
 Acesse o [BtbN/FFmpeg-Builds/releases](https://github.com/BtbN/FFmpeg-Builds/releases)
 instale a versão para seu dispositivo
 ## passo 2: mudando o diretorio no codigo
 1. copie o diretorio onde foi instalado o ffmpeg
-2. na linha 74 **'ffmpeg_location': r'C:\Users\Home\Desktop\Spotify-Playlist-Downloader\ffmpeg-\bin',** Substitua/atualize o caminho do seu FFmpeg
-
+2. cole o diretorio no arquivo config.env
 # Configurando o arquivo `config.env`
 
-Para que o projeto funcione corretamente, você precisa configurar suas credenciais do Spotify. Siga os passos abaixo para obter as credenciais e criar o arquivo `config.env`:
+Para que o projeto funcione corretamente, você precisa configurar suas credenciais do Spotify. Siga os passos abaixo para obter as credenciais para o arquivo `config.env`:
 
-**DICA** TRADUZA A PAGINA
+**NOTA** tem 4 configurações que precisam ser mudadas
 
 ## Passo 1: Criar um aplicativo no Spotify Developers
 1. Acesse o [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
@@ -36,7 +28,6 @@ Para que o projeto funcione corretamente, você precisa configurar suas credenci
 ## Passo 2: Criar o arquivo `config.env`
 1. Na raiz do projeto, crie um arquivo chamado `config.env`.
 2. Cole os seguintes dados no arquivo e substitua os valores placeholders pelas suas credenciais:
-**NOTA** existe um arquivo exemplo, remova a linha com @@@ e substitua os valores
 
 3. Salve o arquivo.
 
