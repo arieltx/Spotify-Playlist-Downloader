@@ -2,3 +2,4 @@ requests
 spotipy
 yt-dlp
 python-dotenv
+pyinstaller
