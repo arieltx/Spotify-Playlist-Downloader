@@ -38,3 +38,5 @@ Certifique-se de que o arquivo `config.env` está salvo na pasta raiz do projeto
 
 ## Passo 4: Executar o programa
 Agora você pode executar o programa normalmente! As credenciais serão carregadas automaticamente do arquivo `config.env`.
+
+## Para linux ainda esta sendo desenvolvido, para quem quiser ajudar o codigo esta disponivel
