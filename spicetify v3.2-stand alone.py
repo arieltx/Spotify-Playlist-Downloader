@@ -19,10 +19,10 @@
 #  Instalação:
 #    pip install -U spotipy yt-dlp python-dotenv ttkbootstrap
 #
-#  config.env:
-#    SPOTIPY_CLIENT_ID=seu_client_id
-#    FFMPEG_PATH=C:\ffmpeg\bin
-#    SAVE_PATH=C:\Musicas
+#  Configuração externa: NÃO necessária.
+#  Client ID fica no código e o FFmpeg pode ser empacotado pelo PyInstaller.
+#
+#  A pasta de saída é escolhida dentro do aplicativo e salva em settings.json.
 #
 #  Redirect URI do Spotify Developer Dashboard:
 #    http://127.0.0.1:8888/callback
@@ -38,17 +38,19 @@ from queue import Empty, Queue
 from urllib.parse import urlparse
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog
+import json
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
 import spotipy
-from dotenv import load_dotenv
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyPKCE
 import yt_dlp
-
+import sys
+import shutil
+import webbrowser
 
 # =============================================================================
 # COMO MANTER / EDITAR ESTE ARQUIVO
@@ -57,7 +59,7 @@ import yt_dlp
 # Antes de modificar, use este mapa:
 #
 # 1. CONFIGURAÇÃO GERAL
-#    Nome, Redirect URI, permissões e localização do config.env.
+#    Nome, Redirect URI, permissões e configurações básicas.
 #
 # 2. SPOTIFY
 #    Autenticação e leitura de playlists/faixas.
@@ -95,7 +97,8 @@ import yt_dlp
 #                   também o mesmo endereço no Spotify Developer Dashboard.
 # SPOTIFY_SCOPE  -> permissões solicitadas ao Spotify.
 # BASE_DIR       -> pasta onde este .py está localizado.
-# CONFIG_PATH    -> localização do arquivo config.env.
+# CONFIG_PATH    -> não utilizado; configuração é interna ao aplicativo.
+# SETTINGS_PATH  -> arquivo local onde a pasta de saída é salva.
 #
 # Para customizações visuais, procure mais abaixo por:
 #   class SpotifyDownloaderApp
@@ -104,7 +107,7 @@ import yt_dlp
 # =============================================================================
 
 # Nome da aplicação mostrado no título da janela.
-APP_NAME = "Spotify Playlist Downloader V3.1"
+APP_NAME = "Spotify Playlist Downloader V3.2"
 
 # URI usada no fluxo OAuth PKCE.
 # IMPORTANTE: deve ser idêntica à cadastrada no Spotify Developer Dashboard.
@@ -121,14 +124,9 @@ SPOTIFY_SCOPE = (
 # Pasta deste próprio script.
 BASE_DIR = Path(__file__).resolve().parent
 
-# Arquivo de configuração externo.
-# Primeiro tenta encontrar junto do .py; se não existir, tenta a pasta atual.
-CONFIG_PATH = BASE_DIR / "config.env"
-if not CONFIG_PATH.exists():
-    CONFIG_PATH = Path.cwd() / "config.env"
-
-# Carrega SPOTIPY_CLIENT_ID, FFMPEG_PATH e SAVE_PATH do config.env.
-load_dotenv(CONFIG_PATH)
+# Preferências locais do aplicativo.
+# O arquivo é criado automaticamente ao lado do programa/script.
+SETTINGS_PATH = BASE_DIR / "settings.json"
 
 
 # =============================================================================
@@ -155,15 +153,8 @@ class DownloadCancelled(Exception):
 # =============================================================================
 
 def configurar_spotify():
-    client_id = os.getenv("SPOTIPY_CLIENT_ID")
-
-    if not client_id:
-        raise ValueError(
-            "SPOTIPY_CLIENT_ID não encontrado no arquivo config.env."
-        )
-
     auth_manager = SpotifyPKCE(
-        client_id=client_id,
+        client_id="a58976f93ec94fa6b72c7456adcea49c",
         redirect_uri=REDIRECT_URI,
         scope=SPOTIFY_SCOPE,
         cache_path=str(BASE_DIR / ".spotify_cache"),
@@ -175,7 +166,6 @@ def configurar_spotify():
         requests_timeout=15,
         retries=3,
     )
-
 
 def extrair_id_spotify(url, tipo_esperado=None):
     """Extrai e valida o ID de um recurso do Spotify."""
@@ -215,34 +205,51 @@ def extrair_id_spotify(url, tipo_esperado=None):
 
 
 def extrair_informacoes_musica(spotify, musica_url):
-    """Obtém título e artista de uma música do Spotify."""
+    """
+    Extrai título e artista de uma música do Spotify.
 
-    track_id = extrair_id_spotify(musica_url, "track")
+    Aceita links nos formatos:
+        https://open.spotify.com/track/ID
+        https://open.spotify.com/intl-pt/track/ID
+        spotify:track:ID
+        ID diretamente
+    """
 
-    try:
-        track = spotify.track(track_id)
-    except SpotifyException as erro:
-        if erro.http_status == 403:
-            raise RuntimeError(
-                "O Spotify recusou o acesso a esta música."
-            ) from erro
-        raise
+    musica_url = musica_url.strip()
 
-    if not track:
-        raise ValueError("Música não encontrada.")
+    # Link Spotify normal/localizado
+    if "open.spotify.com" in musica_url:
+        partes = musica_url.rstrip("/").split("/")
 
-    titulo = track.get("name")
-    artistas = track.get("artists", [])
+        # Procura explicitamente por 'track'
+        if "track" in partes:
+            indice = partes.index("track")
 
-    if not titulo or not artistas:
-        raise ValueError(
-            "Não foi possível obter título e artista da música."
-        )
+            if indice + 1 < len(partes):
+                track_id = partes[indice + 1].split("?")[0]
+            else:
+                raise ValueError("ID da música não encontrado no link.")
+        else:
+            raise ValueError(
+                "O link não parece ser de uma música do Spotify."
+            )
 
-    artista = artistas[0].get(
-        "name",
-        "Artista desconhecido",
-    )
+    # URI Spotify: spotify:track:XXXXXXXX
+    elif musica_url.startswith("spotify:track:"):
+        track_id = musica_url.split(":")[-1]
+
+    # ID direto
+    else:
+        track_id = musica_url.split("?")[0]
+
+    # Validação básica
+    if not track_id or len(track_id) < 10:
+        raise ValueError("ID da música do Spotify inválido.")
+
+    track = spotify.track(track_id)
+
+    titulo = track["name"]
+    artista = track["artists"][0]["name"]
 
     return titulo, artista
 
@@ -325,8 +332,7 @@ def extrair_musicas_e_nome_playlist(spotify, playlist_url):
 # FFMPEG / ARQUIVOS
 # =============================================================================
 #
-# FFMPEG_PATH no config.env = caminho do ffmpeg.exe ou da pasta que o contém.
-# SAVE_PATH   no config.env = pasta raiz onde os downloads serão armazenados.
+# O FFmpeg é localizado automaticamente e a pasta de saída é configurada pela GUI.
 #
 # Funções desta seção:
 #   obter_caminho_ffmpeg() -> encontra/valida o FFmpeg.
@@ -338,43 +344,70 @@ def extrair_musicas_e_nome_playlist(spotify, playlist_url):
 # =============================================================================
 
 def obter_caminho_ffmpeg():
-    ffmpeg_path = os.getenv("FFMPEG_PATH")
+    """
+    Localiza automaticamente o FFmpeg.
 
-    if not ffmpeg_path:
-        raise FileNotFoundError(
-            "FFMPEG_PATH não foi definido no arquivo config.env."
+    Funcionamento:
+    1. Quando executado como .py:
+       procura em:
+           ./ffmpeg/ffmpeg.exe
+
+    2. Quando executado como .exe pelo PyInstaller:
+       procura dentro dos arquivos empacotados.
+
+    3. Como último recurso:
+       procura o FFmpeg no PATH do Windows.
+
+    Retorna:
+        str: Caminho completo para o executável do FFmpeg.
+
+    Levanta:
+        FileNotFoundError: Se o FFmpeg não for encontrado.
+    """
+
+    # ==========================================================
+    # EXECUÇÃO NORMAL (.py)
+    # ==========================================================
+
+    caminho_local = BASE_DIR / "ffmpeg" / "ffmpeg.exe"
+
+    if caminho_local.is_file():
+        return str(caminho_local)
+
+    # ==========================================================
+    # EXECUÇÃO COMO .EXE PELO PYINSTALLER
+    # ==========================================================
+
+    if getattr(sys, "frozen", False):
+        caminho_embutido = (
+            Path(sys._MEIPASS) /
+            "ffmpeg" /
+            "ffmpeg.exe"
         )
 
-    caminho = Path(ffmpeg_path).expanduser()
+        if caminho_embutido.is_file():
+            return str(caminho_embutido)
 
-    if caminho.is_file():
-        return str(caminho)
+    # ==========================================================
+    # FALLBACK: FFmpeg INSTALADO NO WINDOWS
+    # ==========================================================
 
-    if caminho.is_dir():
-        ffmpeg_exe = caminho / "ffmpeg.exe"
-        if ffmpeg_exe.exists():
-            return str(ffmpeg_exe)
+    ffmpeg_sistema = shutil.which("ffmpeg")
 
-        ffmpeg_bin = caminho / "ffmpeg"
-        if ffmpeg_bin.exists():
-            return str(ffmpeg_bin)
+    if ffmpeg_sistema:
+        return ffmpeg_sistema
+
+    # ==========================================================
+    # NÃO ENCONTRADO
+    # ==========================================================
 
     raise FileNotFoundError(
-        f"FFmpeg não encontrado em:\n{caminho}"
+        "FFmpeg não foi encontrado.\n\n"
+        "O programa tentou localizar o FFmpeg "
+        "internamente e no PATH do sistema."
     )
 
-
-SAVE_PATH = Path(
-    os.getenv(
-        "SAVE_PATH",
-        str(BASE_DIR / "downloads"),
-    )
-).expanduser()
-
-SAVE_PATH.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+DEFAULT_SAVE_PATH = BASE_DIR / "downloads"
 
 
 def limpar_nome(nome, max_length=180):
@@ -450,8 +483,9 @@ def normalizar_nome_arquivo(nome):
     )
 
 
-def criar_pasta(nome_pasta):
-    pasta = SAVE_PATH / limpar_nome(nome_pasta)
+def criar_pasta(save_path, nome_pasta):
+    """Cria uma subpasta dentro da pasta de saída escolhida pelo usuário."""
+    pasta = Path(save_path) / limpar_nome(nome_pasta)
 
     pasta.mkdir(
         parents=True,
@@ -923,7 +957,7 @@ class DownloadManager:
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": "192",
+                    "preferredquality": "320",
                 }
             ],
             "retries": 3,
@@ -1009,11 +1043,20 @@ class DownloadManager:
 # Log:
 #   bg / fg / insertbackground / selectbackground / font
 #
+# Pasta de saída:
+#   botão "📁 Pasta de saída" -> abre a janela de configuração.
+#   settings.json -> guarda a última pasta escolhida.
+#
 # IMPORTANTE:
 # O tema principal vem do ttkbootstrap (darkly), mas vários elementos da HUD
 # são widgets Tk nativos de propósito. Assim o fundo preto/cinza permanece
 # consistente mesmo no Windows.
 # =============================================================================
+
+def abrir_instagram():
+    """Abre o Instagram do desenvolvedor no navegador padrão."""
+    webbrowser.open("https://www.instagram.com/Arielton_Gross/")
+
 
 class SpotifyDownloaderApp:
     """Interface principal do Spotify Playlist Downloader."""
@@ -1051,14 +1094,15 @@ class SpotifyDownloaderApp:
         # geometry = tamanho inicial: largura x altura
         # minsize  = menor tamanho que o usuário poderá deixar a janela
         self.root.title(APP_NAME)
-        self.root.geometry("860x650")
-        self.root.minsize(760, 560)
+        self.root.geometry("900x720")
+        self.root.minsize(850, 680)
         self.root.configure(background=self.BG)
 
         self.ui_queue = Queue()
         self.download_manager = DownloadManager(self.ui_queue)
 
-        self.spotify = None
+        # Pasta de saída escolhida pelo usuário.
+        self.save_path = self.carregar_pasta_saida()
         self.total_musicas = 0
         self.download_em_andamento = False
         self.baixadas = 0
@@ -1070,6 +1114,151 @@ class SpotifyDownloaderApp:
 
         self.root.after(100, self.processar_fila)
         self.root.protocol("WM_DELETE_WINDOW", self.fechar)
+
+    # -------------------------------------------------------------------------
+    # Configuração da pasta de saída
+    # -------------------------------------------------------------------------
+
+    def carregar_pasta_saida(self):
+        """Carrega a última pasta escolhida; usa downloads como padrão."""
+        try:
+            if SETTINGS_PATH.exists():
+                with open(SETTINGS_PATH, "r", encoding="utf-8") as arquivo:
+                    dados = json.load(arquivo)
+
+                caminho = Path(dados.get("save_path", "")).expanduser()
+                if caminho:
+                    caminho.mkdir(parents=True, exist_ok=True)
+                    return caminho
+        except (OSError, ValueError, TypeError):
+            pass
+
+        DEFAULT_SAVE_PATH.mkdir(parents=True, exist_ok=True)
+        return DEFAULT_SAVE_PATH
+
+    def salvar_pasta_saida(self):
+        """Salva a pasta de saída para ela continuar após reiniciar o programa."""
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as arquivo:
+            json.dump(
+                {"save_path": str(self.save_path)},
+                arquivo,
+                indent=4,
+                ensure_ascii=False,
+            )
+
+    def configurar_pasta_saida(self):
+        """Abre uma pequena janela dedicada à configuração da pasta de saída."""
+        if self.download_em_andamento:
+            return
+
+        janela = tk.Toplevel(self.root)
+        janela.title("Pasta de saída")
+        janela.geometry("620x220")
+        janela.resizable(False, False)
+        janela.configure(bg=self.BG)
+        janela.transient(self.root)
+        janela.grab_set()
+
+        tk.Label(
+            janela,
+            text="CONFIGURAÇÃO DA PASTA DE SAÍDA",
+            bg=self.BG,
+            fg=self.GREEN,
+            font=("Consolas", 11, "bold"),
+        ).pack(anchor="w", padx=22, pady=(20, 8))
+
+        tk.Label(
+            janela,
+            text="Escolha onde as playlists e músicas serão salvas:",
+            bg=self.BG,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=22)
+
+        linha = tk.Frame(janela, bg=self.BG)
+        linha.pack(fill="x", padx=22, pady=12)
+
+        entrada = tk.Entry(
+            linha,
+            bg=self.LOG_BG,
+            fg=self.TEXT,
+            insertbackground=self.TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=self.BORDER,
+            highlightcolor=self.GREEN,
+            font=("Consolas", 9),
+        )
+        entrada.pack(side="left", fill="x", expand=True, ipady=8)
+        entrada.insert(0, str(self.save_path))
+
+        def escolher():
+            pasta = filedialog.askdirectory(
+                title="Escolher pasta de saída",
+                initialdir=str(self.save_path) if self.save_path.exists() else str(Path.home()),
+                parent=janela,
+            )
+            if pasta:
+                entrada.delete(0, "end")
+                entrada.insert(0, pasta)
+
+        ttk.Button(
+            linha,
+            text="📁 Escolher",
+            command=escolher,
+            bootstyle=INFO,
+            width=14,
+        ).pack(side="left", padx=(10, 0))
+
+        botoes = tk.Frame(janela, bg=self.BG)
+        botoes.pack(fill="x", padx=22, pady=(4, 18))
+
+        def salvar():
+            caminho = Path(entrada.get().strip()).expanduser()
+
+            if not caminho:
+                messagebox.showwarning(
+                    "Pasta inválida",
+                    "Escolha uma pasta de saída.",
+                    parent=janela,
+                )
+                return
+
+            try:
+                caminho.mkdir(parents=True, exist_ok=True)
+            except OSError as erro:
+                messagebox.showerror(
+                    "Erro",
+                    f"Não foi possível usar esta pasta:\n\n{erro}",
+                    parent=janela,
+                )
+                return
+
+            self.save_path = caminho
+            self.salvar_pasta_saida()
+            self.atualizar_label_destino()
+            self.adicionar_log(f"Pasta de saída alterada: {caminho}")
+            janela.destroy()
+
+        ttk.Button(
+            botoes,
+            text="Cancelar",
+            command=janela.destroy,
+            bootstyle=SECONDARY,
+            width=14,
+        ).pack(side="right", padx=(8, 0))
+
+        ttk.Button(
+            botoes,
+            text="Salvar",
+            command=salvar,
+            bootstyle=SUCCESS,
+            width=14,
+        ).pack(side="right")
+
+        entrada.focus_set()
+        janela.bind("<Return>", lambda _event: salvar())
+        janela.bind("<Escape>", lambda _event: janela.destroy())
 
     # -------------------------------------------------------------------------
     # Spotify
@@ -1114,7 +1303,7 @@ class SpotifyDownloaderApp:
 
         tk.Label(
             header,
-            text="V3.1  •  DARK HUD",
+            text="V3.2  •  DARK HUD",
             bg=self.BG,
             fg=self.GREEN,
             font=("Segoe UI", 9, "bold"),
@@ -1140,7 +1329,7 @@ class SpotifyDownloaderApp:
         )
         frame_botoes.pack(fill="x", pady=(2, 12))
 
-        for coluna in range(4):
+        for coluna in range(5):
             frame_botoes.columnconfigure(coluna, weight=1, uniform="buttons")
 
         self.btn_playlist = ttk.Button(
@@ -1172,6 +1361,17 @@ class SpotifyDownloaderApp:
         )
         self.btn_musica.grid(row=0, column=2, padx=5, sticky="ew")
 
+        # Botão da pasta de saída. Ele abre uma janela separada para configurar
+        # o diretório e salvar a preferência em settings.json.
+        self.btn_pasta = ttk.Button(
+            frame_botoes,
+            text="📁 Pasta de saída",
+            command=self.configurar_pasta_saida,
+            bootstyle=WARNING,
+            width=18,
+        )
+        self.btn_pasta.grid(row=0, column=3, padx=5, sticky="ew")
+
         self.btn_cancelar = ttk.Button(
             frame_botoes,
             text="Cancelar",
@@ -1180,7 +1380,7 @@ class SpotifyDownloaderApp:
             state="disabled",
             width=18,
         )
-        self.btn_cancelar.grid(row=0, column=3, padx=(5, 0), sticky="ew")
+        self.btn_cancelar.grid(row=0, column=4, padx=(5, 0), sticky="ew")
 
         # -----------------------------------------------------------------
         # Status
@@ -1205,14 +1405,6 @@ class SpotifyDownloaderApp:
             font=("Consolas", 9, "bold"),
         ).pack(side="left")
 
-        self.label_status = tk.Label(
-            status_title,
-            text="● READY",
-            bg=self.PANEL,
-            fg=self.GREEN,
-            font=("Consolas", 9, "bold"),
-        )
-        self.label_status.pack(side="right")
 
         status_body = tk.Frame(frame_status, bg=self.PANEL)
         status_body.pack(fill="x", padx=14, pady=(2, 12))
@@ -1386,25 +1578,39 @@ class SpotifyDownloaderApp:
         # -----------------------------------------------------------------
         # Rodapé
         # -----------------------------------------------------------------
-        footer = tk.Frame(main, bg=self.BG)
-        footer.pack(fill="x")
-
-        tk.Label(
-            footer,
-            text=f"Salvar em: {SAVE_PATH}",
+        # Esquerda: status da autenticação PKCE.
+        # Direita: crédito do desenvolvedor.
+        footer = tk.Frame(
+            main,
             bg=self.BG,
-            fg="#687585",
-            anchor="w",
-            font=("Segoe UI", 8),
-        ).pack(side="left", fill="x", expand=True)
+        )
+        footer.pack(
+            fill="x",
+            pady=(8, 0),
+        )
 
-        tk.Label(
+        self.label_status = tk.Label(
             footer,
-            text="PKCE • READY",
+            text="● PKCE • READY",
             bg=self.BG,
             fg=self.GREEN,
-            font=("Consolas", 8, "bold"),
-        ).pack(side="right")
+            font=("Consolas", 9, "bold"),
+        )
+        self.label_status.pack(side="left")
+
+        credits = tk.Label(
+            footer,
+            text="⚡ Desenvolvido por Arielton_Gross • Instagram",
+            bg=self.BG,
+            fg=self.GREEN,
+            font=("Segoe UI", 9),
+            cursor="hand2",
+        )
+        credits.pack(side="right")
+        credits.bind(
+            "<Button-1>",
+            lambda _event: abrir_instagram(),
+        )
 
     # -------------------------------------------------------------------------
     # GUI utilities
@@ -1426,12 +1632,13 @@ class SpotifyDownloaderApp:
         self.btn_playlist.configure(state=estado)
         self.btn_lista.configure(state=estado)
         self.btn_musica.configure(state=estado)
+        self.btn_pasta.configure(state=estado)
         self.btn_cancelar.configure(
             state="normal" if executando else "disabled"
         )
 
         self.label_status.configure(
-            text="● DOWNLOADING" if executando else "● READY",
+            text="● PKCE • DOWNLOADING" if executando else "● PKCE • READY",
             fg="#facc15" if executando else self.GREEN,
         )
 
@@ -1487,7 +1694,7 @@ class SpotifyDownloaderApp:
                 )
                 return
 
-            pasta = criar_pasta(playlist_nome)
+            pasta = criar_pasta(self.save_path, playlist_nome)
 
             self.resetar_progresso()
             self.label_playlist.configure(
@@ -1540,7 +1747,7 @@ class SpotifyDownloaderApp:
                 url,
             )
 
-            pasta = criar_pasta(playlist_nome)
+            pasta = criar_pasta(self.save_path, playlist_nome)
             arquivo = salvar_musicas_em_txt(musicas, pasta)
 
             messagebox.showinfo(
@@ -1579,7 +1786,7 @@ class SpotifyDownloaderApp:
                 url,
             )
 
-            pasta = criar_pasta("Musicas Individuais")
+            pasta = criar_pasta(self.save_path, "Musicas Individuais")
 
             self.resetar_progresso()
             self.label_playlist.configure(
@@ -1799,10 +2006,39 @@ class SpotifyDownloaderApp:
 # MAIN
 # =============================================================================
 
+def resource_path(nome):
+    """
+    Localiza recursos da aplicação.
+
+    Funciona tanto executando o .py quanto
+    executando o programa empacotado pelo PyInstaller.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / nome
+
+    return BASE_DIR / nome
+
+
 def main():
-    # ttkbootstrap fornece o tema darkly real para os widgets ttk.
+    # Cria a única janela principal
     root = ttk.Window(themename="darkly")
+
+    # =========================================================================
+    # ÍCONE DA APLICAÇÃO
+    # =========================================================================
+
+    icone = resource_path("musicfolder_99333.ico")
+
+    if icone.exists():
+        root.iconbitmap(str(icone))
+
+    # =========================================================================
+    # INICIALIZAÇÃO DA APLICAÇÃO
+    # =========================================================================
+
     SpotifyDownloaderApp(root)
+
+    # Inicia a interface
     root.mainloop()
 
 
