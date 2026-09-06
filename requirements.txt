@@ -3,3 +3,16 @@ spotipy
 yt-dlp
 python-dotenv
 pyinstaller
+os
+re
+threading
+unicodedata
+pathlib
+queue
+urllib.parse
+tkinter
+json
+ttkbootstrap
+sys
+shutil
+webbrowser

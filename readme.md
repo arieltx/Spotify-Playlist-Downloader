@@ -18,7 +18,7 @@ Para que o projeto funcione corretamente, você precisa configurar suas credenci
 4. Preencha os campos com:
    - Nome: Escolha um nome para o seu aplicativo.
    - Descrição: Uma breve descrição do que o app faz.
-   - Redirecionar URIs: http://localhost:8080/callback
+   - Redirecionar URIs: http://127.0.0.1:8888/callback
 5. Clique em **Create**.
 6. Após criar o aplicativo, copie os valores de:
    - **Client ID**
