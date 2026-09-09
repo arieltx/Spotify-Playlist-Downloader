@@ -154,7 +154,7 @@ class DownloadCancelled(Exception):
 
 def configurar_spotify():
     auth_manager = SpotifyPKCE(
-        client_id="a58976f93ec94fa6b72c7456adcea49c",
+        client_id="CLIENT_ID",
         redirect_uri=REDIRECT_URI,
         scope=SPOTIFY_SCOPE,
         cache_path=str(BASE_DIR / ".spotify_cache"),
