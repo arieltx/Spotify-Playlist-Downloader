@@ -90,6 +90,8 @@ Para compilar a aplicação no Windows mantendo a interface HUD (`ttkbootstrap`)
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
 pyinstaller --noconfirm --clean --windowed --icon="icone.ico" --add-data "icone.ico;." --collect-all ttkbootstrap --add-binary "ffmpeg.exe;ffmpeg" --name "Spotify Playlist Downloader" "V3.3.7.py"
+
+pyinstaller --noconfirm --clean --log-level=INFO "Spotify Playlist Downloader.spec"
 ```
 
 ---
@@ -131,7 +133,7 @@ Acesse a página oficial de lançamentos do projeto para obter o binário compil
 
 ### ☁️ Servidor Alternativo (Link Espelho)
 Caso a página principal esteja temporariamente instável ou inacessível, utilize o nosso link direto do armazenamento em nuvem:
-[![Download Drive](https://shields.io)](SUA_URL_COMPARTILHADA_DO_GOOGLE_DRIVE_AQUI)
+[![Download Drive](https://shields.io)](https://drive.google.com/file/d/13LL_jVhGTTkFisP00zZuchtdXFy4AQ4j/view?usp=sharing)
 
 ---
 *(⚠️ Nota Importante: Para o correto funcionamento do ecossistema de requisições e autenticação segura via API, recomenda-se de possuir uma assinatura ativa do Spotify Premium na conta utilizada).*
@@ -142,4 +144,4 @@ Caso a página principal esteja temporariamente instável ou inacessível, utili
 
 Este software possui caráter estritamente educacional e para uso pessoal. Certifique-se de respeitar os Termos de Serviço das plataformas de streaming integradas.
 
-Desenvolvido com 💚 por [Arielton Gross](https://instagram.com).
+Desenvolvido com 💚 por [Arielton Gross](https://www.instagram.com/Arielton_Gross/).
