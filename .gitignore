@@ -1,30 +1,30 @@
 # =============================================================================
-# GITIGNORE PARA SpotiFetch  &  SPOTIFY PLAYLIST DOWNLOADER V3.3.7 
+# GITIGNORE FOR SPOTIFETCH & SPOTIFY PLAYLIST DOWNLOADER V3.3.7 
 # =============================================================================
 
-# Arquivos de bytecode e caches do Python
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Cache de autenticação do Spotify e requests
-.spotify_cache
 .cache/
 
-# Ambientes virtuais locais
+# Spotify authentication cache
+.spotify_cache
+
+# Environments
 venv/
 .venv/
 env/
 ENV/
 
-# Arquivo de configuração local (caso use para chaves em texto limpo)
+# Local environment variables and configurations
 .env
+*.local
 
-# Pastas geradas pelo .NET durante a compilação do .exe
+# Build and distribution directories (.NET & PyInstaller)
 build/
 build-check/
 dist/
-*.spec
 _internal/
 dist-*/
 dist*/
@@ -34,22 +34,22 @@ dist*/
 .deps-ffmpeg-*/
 .nuget/
 obj/
+bin/
+*.spec
 
-
-# Executáveis necessarios do Spotifetch solto na raiz 
+# Binaries and executables
+*.exe
+*.dll
+*.so
+*.dylib
 ffmpeg.exe
 yt-dlp.exe
 
-# Pastas de downloads criadas localmente pelo aplicativo durante os testes
+# Local download directories and logs
 downloads/
-Downloads via Lote TXT/
-Musicas Individuais/
-
-# Arquivos locais de log e relatórios de erro gerados no seu computador
+[Dd]ownload*/
 *.log
-musicas.txt
-musicas_com_erro.txt
+*.txt
+*.tmp
+*.temp
 
-# Arquivos temporários e de configuração do sistema operacional
-.DS_Store
-Thumbs.db

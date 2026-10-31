@@ -1,0 +1,44 @@
+# =============================================================================
+# GITIGNORE PARA SPOTIFY PLAYLIST DOWNLOADER V3.3.7
+# =============================================================================
+
+# Arquivos de bytecode e caches do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache de autenticação do Spotify e requests
+.spotify_cache
+.cache/
+
+# Ambientes virtuais locais
+venv/
+.venv/
+env/
+ENV/
+
+# Arquivo de configuração local (caso use para chaves em texto limpo)
+.env
+
+# Pastas geradas pelo PyInstaller durante a compilação do .exe
+build/
+dist/
+*.spec
+_internal/
+
+# Executável do FFmpeg solto na raiz (já que ele é embutido no .exe via script)
+ffmpeg.exe
+
+# Pastas de downloads criadas localmente pelo aplicativo durante os testes
+downloads/
+Downloads via Lote TXT/
+Musicas Individuais/
+
+# Arquivos locais de log e relatórios de erro gerados no seu computador
+*.log
+musicas.txt
+musicas_com_erro.txt
+
+# Arquivos temporários e de configuração do sistema operacional
+.DS_Store
+Thumbs.db
