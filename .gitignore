@@ -1,5 +1,5 @@
 # =============================================================================
-# GITIGNORE PARA SPOTIFY PLAYLIST DOWNLOADER V3.3.7
+# GITIGNORE PARA SpotiFetch  &  SPOTIFY PLAYLIST DOWNLOADER V3.3.7 
 # =============================================================================
 
 # Arquivos de bytecode e caches do Python
@@ -20,14 +20,25 @@ ENV/
 # Arquivo de configuração local (caso use para chaves em texto limpo)
 .env
 
-# Pastas geradas pelo PyInstaller durante a compilação do .exe
+# Pastas geradas pelo .NET durante a compilação do .exe
 build/
+build-check/
 dist/
 *.spec
 _internal/
+dist-*/
+dist*/
+.dotnet-cli/
+.dotnet-sdk/
+.dotnet-install.ps1
+.deps-ffmpeg-*/
+.nuget/
+obj/
 
-# Executável do FFmpeg solto na raiz (já que ele é embutido no .exe via script)
+
+# Executáveis necessarios do Spotifetch solto na raiz 
 ffmpeg.exe
+yt-dlp.exe
 
 # Pastas de downloads criadas localmente pelo aplicativo durante os testes
 downloads/
