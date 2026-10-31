@@ -1,22 +1,23 @@
 using System.Text.Json;
 using System.IO;
 
-namespace LaurusDownloader;
+namespace SpotiFetch;
 
 public sealed class UserSettings
 {
     public string OutputDirectory { get; set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), "SpotiFetch Downloads");
-    public string Bitrate { get; set; } = "320";
-    public int MaxWorkers { get; set; } = 4;
-    public bool SkipExisting { get; set; } = true;
+    public string Bitrate { get; set; } = "320"; // bitrate padrão
+    public int MaxWorkers { get; set; } = 4; // threads de download
+    public bool SkipExisting { get; set; } = true; // pular musicas existentes, padrão true
+    public bool UseChromeCookies { get; set; } = false; //padrao false
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SpotiFetch", "settings.json");
     private static string LegacyFilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "LaurusDownloader", "settings.json");
+        "SpotiFetch", "settings.json");
 
     public static UserSettings Load()
     {

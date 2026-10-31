@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 using System.Globalization;
 using System.Text;
 
-namespace LaurusDownloader;
+namespace SpotiFetch;
 
 public sealed class DownloadEngine
 {
@@ -19,7 +19,9 @@ public sealed class DownloadEngine
         string bitrate,
         CancellationToken cancellationToken,
         Action<string>? statusChanged = null,
-        Action<double>? progressChanged = null)
+        Action<double>? progressChanged = null,
+        bool useChromeCookies = false,
+        Action<DownloadProgressInfo>? telemetryChanged = null)
     {
         var ytdlp = FindExecutable("yt-dlp.exe", "yt-dlp");
         if (ytdlp is null)
@@ -30,60 +32,73 @@ public sealed class DownloadEngine
             throw new FileNotFoundException("ffmpeg.exe não foi encontrado. Coloque-o junto do aplicativo ou adicione-o ao PATH.");
 
         Directory.CreateDirectory(outputDirectory);
+        track.Bitrate = $"{bitrate} kbps";
         var safeTitle = SafeFilePart(track.Title);
         var fileName = string.IsNullOrWhiteSpace(track.Artist)
             ? safeTitle
             : $"{safeTitle} - {SafeFilePart(track.Artist)}";
-        var workDirectory = Path.Combine(outputDirectory, $".laurus-{Guid.NewGuid():N}");
+        var workRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpotiFetch", "Work");
+        var workDirectory = Path.Combine(workRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workRoot);
         Directory.CreateDirectory(workDirectory);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var input = !string.IsNullOrWhiteSpace(track.SourceUrl)
-                ? track.SourceUrl!
-                : await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged);
-            cancellationToken.ThrowIfCancellationRequested();
-            var start = new ProcessStartInfo
+            string input;
+            if (!string.IsNullOrWhiteSpace(track.SourceUrl))
             {
-                FileName = ytdlp,
-                WorkingDirectory = workDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            foreach (var arg in new[]
+                input = track.SourceUrl!;
+            }
+            else
+            {
+                try
+                {
+                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies);
+                }
+                catch (InvalidOperationException ex) when (
+                    useChromeCookies && ex.Message.Contains("Could not copy Chrome cookie database", StringComparison.OrdinalIgnoreCase))
+                {
+                    statusChanged?.Invoke("Chrome está usando os cookies; tentando buscar sem autenticação do navegador");
+                    useChromeCookies = false;
+                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies: false);
+                }
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var downloadArguments = new[]
             {
                 "--no-playlist", "--no-continue", "--extract-audio", "--audio-format", "mp3",
                 "--audio-quality", $"{bitrate}K", "--ffmpeg-location", ffmpeg,
-                "--embed-metadata", "--embed-thumbnail", "--newline", "--no-warnings",
+                "--newline", "--no-warnings", "--no-embed-thumbnail", "--retry-sleep", "http:2",
                 "--output", Path.Combine(workDirectory, fileName + ".%(ext)s"), input
-            }) start.ArgumentList.Add(arg);
+            };
+            var (exitCode, diagnostic) = await RunDownloadProcessAsync(
+                ytdlp, workDirectory, downloadArguments, useChromeCookies,
+                cancellationToken, statusChanged, progressChanged, telemetryChanged);
 
-            using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
-            process.OutputDataReceived += (_, e) => ReportLine(e.Data, statusChanged, progressChanged);
-            process.ErrorDataReceived += (_, e) => ReportLine(e.Data, statusChanged, progressChanged);
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            using var killOnCancel = cancellationToken.Register(() => TryKillProcessTree(process));
-            try { await process.WaitForExitAsync(cancellationToken); }
-            catch (OperationCanceledException)
+            if (exitCode != 0 && useChromeCookies && IsChromeCookieCopyError(diagnostic))
             {
-                await EnsureProcessStoppedAsync(process);
-                throw;
+                statusChanged?.Invoke("Não foi possível acessar os cookies do Chrome; tentando o download sem cookies");
+                useChromeCookies = false;
+                (exitCode, diagnostic) = await RunDownloadProcessAsync(
+                    ytdlp, workDirectory, downloadArguments, useChromeCookies: false,
+                    cancellationToken, statusChanged, progressChanged, telemetryChanged);
             }
+
             cancellationToken.ThrowIfCancellationRequested();
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException("yt-dlp terminou com erro. Verifique a aba Atividade para detalhes.");
+            if (exitCode != 0)
+                throw new InvalidOperationException(FormatYtDlpError(diagnostic));
 
             var audioPath = Path.Combine(workDirectory, fileName + ".mp3");
             if (!File.Exists(audioPath))
                 throw new InvalidOperationException("O download terminou, mas o arquivo MP3 não foi gerado.");
-            statusChanged?.Invoke("Aplicando tags e capa");
+            statusChanged?.Invoke("Convertendo e aplicando tags");
             await ApplyTagsAsync(ffmpeg, audioPath, track, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            MoveToAvailableFileName(audioPath, outputDirectory, fileName);
+            var finalPath = MoveToAvailableFileName(audioPath, outputDirectory, fileName);
+            track.FileSizeBytes = new FileInfo(finalPath).Length;
+            track.FilePath = finalPath;
+            track.CompletedAt = DateTime.Now;
             progressChanged?.Invoke(100);
         }
         finally
@@ -92,8 +107,64 @@ public sealed class DownloadEngine
         }
     }
 
+    private static async Task<(int ExitCode, string Diagnostic)> RunDownloadProcessAsync(
+        string ytdlp,
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        bool useChromeCookies,
+        CancellationToken cancellationToken,
+        Action<string>? statusChanged,
+        Action<double>? progressChanged,
+        Action<DownloadProgressInfo>? telemetryChanged)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = ytdlp,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            if (useChromeCookies && i == arguments.Count - 1)
+            {
+                start.ArgumentList.Add("--cookies-from-browser");
+                start.ArgumentList.Add("chrome");
+            }
+            start.ArgumentList.Add(arguments[i]);
+        }
+
+        using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+        process.OutputDataReceived += (_, e) => ReportLine(e.Data, statusChanged, progressChanged, telemetryChanged);
+        var errorLines = new List<string>();
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data)) lock (errorLines) errorLines.Add(e.Data);
+            ReportLine(e.Data, statusChanged, progressChanged, telemetryChanged);
+        };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        using var killOnCancel = cancellationToken.Register(() => TryKillProcessTree(process));
+        try { await process.WaitForExitAsync(cancellationToken); }
+        catch (OperationCanceledException)
+        {
+            await EnsureProcessStoppedAsync(process);
+            throw;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        string diagnostic;
+        lock (errorLines) diagnostic = string.Join(" | ", errorLines.TakeLast(5));
+        return (process.ExitCode, diagnostic);
+    }
+
+    private static bool IsChromeCookieCopyError(string detail) =>
+        detail.Contains("Could not copy Chrome cookie database", StringComparison.OrdinalIgnoreCase);
+
     private static async Task<string> FindBestVideoAsync(
-        string ytdlp, DownloadTrack track, CancellationToken token, Action<string>? statusChanged)
+        string ytdlp, DownloadTrack track, CancellationToken token, Action<string>? statusChanged, bool useChromeCookies)
     {
         statusChanged?.Invoke("Procurando a melhor correspondência de áudio");
         var query = string.Join(" ", new[] { track.Title, track.Artist }.Where(s => !string.IsNullOrWhiteSpace(s)));
@@ -102,8 +173,18 @@ public sealed class DownloadEngine
             FileName = ytdlp, UseShellExecute = false, RedirectStandardOutput = true,
             RedirectStandardError = true, CreateNoWindow = true
         };
-        foreach (var arg in new[] { "--dump-single-json", "--flat-playlist", "--skip-download", "--no-warnings", "--quiet", $"ytsearch5:{query}" })
+        foreach (var arg in new[]
+        {
+            "--dump-single-json", "--flat-playlist", "--skip-download", "--no-warnings", "--quiet",
+            "--retry-sleep", "http:2"
+        })
             start.ArgumentList.Add(arg);
+        if (useChromeCookies)
+        {
+            start.ArgumentList.Add("--cookies-from-browser");
+            start.ArgumentList.Add("chrome");
+        }
+        start.ArgumentList.Add($"ytsearch5:{query}");
 
         using var process = new Process { StartInfo = start };
         process.Start();
@@ -119,7 +200,7 @@ public sealed class DownloadEngine
         }
         token.ThrowIfCancellationRequested();
         var json = await stdout;
-        _ = await stderr;
+        var diagnostic = await stderr;
         if (process.ExitCode == 0)
         {
             try
@@ -143,7 +224,23 @@ public sealed class DownloadEngine
             }
             catch (JsonException) { }
         }
+        if (!string.IsNullOrWhiteSpace(diagnostic) && process.ExitCode != 0)
+            throw new InvalidOperationException(FormatYtDlpError(diagnostic));
         return $"ytsearch1:{query}";
+    }
+
+    private static string FormatYtDlpError(string detail)
+    {
+        if (IsChromeCookieCopyError(detail))
+            return "O yt-dlp não conseguiu ler o banco de cookies do Chrome. O SpotiFetch tentou continuar sem cookies, mas ainda houve falha. Feche o Chrome ou desative o uso dos cookies nas configurações e tente novamente. Detalhe: " + detail;
+        if (detail.Contains("Failed to decrypt with DPAPI", StringComparison.OrdinalIgnoreCase))
+            return "O Windows/Chrome protegeu os cookies com uma chave que o yt-dlp não conseguiu descriptografar. Use uma sessão do YouTube autenticada no Edge ou importe um arquivo cookies.txt exportado localmente. Detalhe: " + detail;
+        if (detail.Contains("not a bot", StringComparison.OrdinalIgnoreCase) ||
+            detail.Contains("sign in to confirm", StringComparison.OrdinalIgnoreCase))
+            return "O YouTube bloqueou a busca automatizada. Ative 'Usar cookies do Chrome' nas configurações, entre no YouTube pelo Chrome e tente novamente. Detalhe: " + detail;
+        return string.IsNullOrWhiteSpace(detail)
+            ? "yt-dlp terminou com erro sem informar detalhes. Verifique a aba Atividade."
+            : "yt-dlp terminou com erro: " + detail;
     }
 
     private static double ScoreCandidate(JsonElement candidate, DownloadTrack track)
@@ -178,8 +275,8 @@ public sealed class DownloadEngine
 
     private static async Task ApplyTagsAsync(string ffmpeg, string audioPath, DownloadTrack track, CancellationToken token)
     {
-        var coverPath = Path.Combine(Path.GetTempPath(), $"laurus-cover-{Guid.NewGuid():N}.jpg");
-        var taggedPath = Path.Combine(Path.GetDirectoryName(audioPath)!, $".laurus-{Guid.NewGuid():N}.mp3");
+        var coverPath = Path.Combine(Path.GetTempPath(), $"Fetch-cover-{Guid.NewGuid():N}.jpg");
+        var taggedPath = Path.Combine(Path.GetDirectoryName(audioPath)!, $".Fetch-{Guid.NewGuid():N}.mp3");
         var hasCover = false;
         try
         {
@@ -248,7 +345,7 @@ public sealed class DownloadEngine
         catch (System.ComponentModel.Win32Exception) { }
     }
 
-    private static void MoveToAvailableFileName(string sourcePath, string outputDirectory, string baseName)
+    private static string MoveToAvailableFileName(string sourcePath, string outputDirectory, string baseName)
     {
         for (var suffix = 1; ; suffix++)
         {
@@ -257,8 +354,11 @@ public sealed class DownloadEngine
             if (File.Exists(destination)) continue;
             try
             {
-                File.Move(sourcePath, destination);
-                return;
+                if (string.Equals(Path.GetPathRoot(sourcePath), Path.GetPathRoot(destination), StringComparison.OrdinalIgnoreCase))
+                    File.Move(sourcePath, destination);
+                else
+                    File.Copy(sourcePath, destination);
+                return destination;
             }
             catch (IOException) when (File.Exists(destination)) { }
         }
@@ -287,10 +387,11 @@ public sealed class DownloadEngine
                 return;
             }
         }
-        statusChanged?.Invoke("Alguns arquivos temporários ficaram em uma pasta .laurus-* dentro da pasta de saída.");
+        statusChanged?.Invoke("Alguns arquivos temporários ficaram em uma pasta .Fetch-* dentro da pasta de saída.");
     }
 
-    private static void ReportLine(string? line, Action<string>? callback, Action<double>? progressChanged)
+    private static void ReportLine(string? line, Action<string>? callback, Action<double>? progressChanged,
+        Action<DownloadProgressInfo>? telemetryChanged)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         var match = Regex.Match(line, @"(?<percent>\d{1,3}(?:\.\d+)?)%");
@@ -298,8 +399,29 @@ public sealed class DownloadEngine
                 CultureInfo.InvariantCulture, out var percent))
         {
             progressChanged?.Invoke(percent);
-            callback?.Invoke($"Baixando {percent:0}%");
+            var speedMatch = Regex.Match(line, @"\bat\s+(?<speed>[\d.,]+\s*(?:KiB/s|MiB/s|GiB/s|kB/s|MB/s|GB/s))", RegexOptions.IgnoreCase);
+            var totalMatch = Regex.Match(line, @"\bof\s+(?<total>[\d.,]+\s*(?:KiB|MiB|GiB|kB|MB|GB))", RegexOptions.IgnoreCase);
+            var speed = speedMatch.Success ? speedMatch.Groups["speed"].Value : "—";
+            var total = totalMatch.Success ? ParseByteSize(totalMatch.Groups["total"].Value) : null;
+            long? downloaded = total is > 0 ? (long)(total.Value * percent / 100d) : null;
+            telemetryChanged?.Invoke(new DownloadProgressInfo(percent, speed, downloaded, total));
+            callback?.Invoke(speed == "—" ? $"Baixando {percent:0}%" : $"Baixando {percent:0}% · {speed}");
         }
+    }
+
+    private static long? ParseByteSize(string value)
+    {
+        var match = Regex.Match(value, @"(?<number>[\d.,]+)\s*(?<unit>KiB|MiB|GiB|kB|MB|GB)", RegexOptions.IgnoreCase);
+        if (!match.Success || !double.TryParse(match.Groups["number"].Value.Replace(',', '.'), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out var amount)) return null;
+        var unit = match.Groups["unit"].Value.ToLowerInvariant();
+        var multiplier = unit switch
+        {
+            "kib" => 1024d, "mib" => 1024d * 1024, "gib" => 1024d * 1024 * 1024,
+            "kb" => 1000d, "mb" => 1000d * 1000, "gb" => 1000d * 1000 * 1000,
+            _ => 1d
+        };
+        return (long)(amount * multiplier);
     }
 
     private static string? FindExecutable(string fileName, string pathName)

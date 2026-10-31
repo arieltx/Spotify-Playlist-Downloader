@@ -2,12 +2,13 @@ using System.IO;
 using System.Text;
 using System.Windows;
 
-namespace LaurusDownloader;
+namespace SpotiFetch;
 
 public partial class App : Application
 {
     public App()
     {
+        WindowsAppIdentity.Register();
         DispatcherUnhandledException += (_, eventArgs) =>
         {
             WriteCrash(eventArgs.Exception);

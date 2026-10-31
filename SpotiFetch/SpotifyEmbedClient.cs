@@ -3,7 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace LaurusDownloader;
+namespace SpotiFetch;
 
 /// <summary>
 /// Reads public Spotify embed metadata. This intentionally avoids Spotify's

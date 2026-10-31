@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>SpotiFetch</RootNamespace>
+    <AssemblyName>SpotiFetch</AssemblyName>
+    <!-- ADICIONE ESTAS DUAS LINHAS AQUI: -->
+    <AssemblyTitle>SpotiFetch</AssemblyTitle>
+    <Product>SpotiFetch</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!-- Ícone: procura primeiro na pasta do projeto, depois na pasta acima. Se não existir, compila sem ícone. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\icone.ico')">
+    <ApplicationIcon>icone.ico</ApplicationIcon>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ApplicationIcon)' == '' And Exists('$(MSBuildProjectDirectory)\..\icone.ico')">
+    <ApplicationIcon>..\icone.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- FFmpeg: procura primeiro na pasta do projeto, depois na pasta acima. -->
+  <ItemGroup>
+    <Content Include="ffmpeg.exe" Condition="Exists('$(MSBuildProjectDirectory)\ffmpeg.exe')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\ffmpeg.exe" Link="ffmpeg.exe" Condition="!Exists('$(MSBuildProjectDirectory)\ffmpeg.exe') And Exists('$(MSBuildProjectDirectory)\..\ffmpeg.exe')" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Target Name="WarnMissingFfmpeg" BeforeTargets="Build">
+    <Warning Condition="!Exists('$(MSBuildProjectDirectory)\ffmpeg.exe') And !Exists('$(MSBuildProjectDirectory)\..\ffmpeg.exe')"
+             Text="ffmpeg.exe não encontrado (nem na pasta do projeto, nem na pasta acima). O app compila, mas a conversão de áudio não vai funcionar." />
+  </Target>
+</Project>

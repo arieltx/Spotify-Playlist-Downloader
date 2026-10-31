@@ -1,11 +1,11 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace LaurusDownloader;
+namespace SpotiFetch;
 
 public sealed class DownloadTrack : INotifyPropertyChanged
 {
-    private string _status = "Na fila";
+    private string _status = "Aguardando";
     private double _progress;
     private bool _isError;
 
@@ -16,6 +16,65 @@ public sealed class DownloadTrack : INotifyPropertyChanged
     public string? ArtworkUrl { get; init; }
     public string? SourceUrl { get; init; }
     public double? DurationSeconds { get; init; }
+    private string _bitrate = "—";
+    private string _speed = "—";
+    private long? _fileSizeBytes;
+
+    public string Bitrate
+    {
+        get => _bitrate;
+        set
+        {
+            if (_bitrate == value) return;
+            _bitrate = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FormatDisplay));
+        }
+    }
+
+    public string Speed
+    {
+        get => _speed;
+        set
+        {
+            if (_speed == value) return;
+            _speed = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SpeedAndSize));
+        }
+    }
+
+    public long? FileSizeBytes
+    {
+        get => _fileSizeBytes;
+        set
+        {
+            if (_fileSizeBytes == value) return;
+            _fileSizeBytes = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SizeDisplay));
+            OnPropertyChanged(nameof(SpeedAndSize));
+        }
+    }
+
+    public string ErrorDetails { get; set; } = "";
+    public DateTime? StartedAt { get; set; }
+
+    public string FormatDisplay => string.IsNullOrWhiteSpace(Bitrate) || Bitrate == "—" ? "MP3" : $"MP3 · {Bitrate}";
+    public string SizeDisplay => FileSizeBytes is long bytes ? FormatSize(bytes) : "—";
+    public string SpeedAndSize => FileSizeBytes is null
+        ? Speed
+        : Speed == "—" ? SizeDisplay : $"{Speed} · {SizeDisplay}";
+
+    private static string FormatSize(long bytes) => bytes >= 1024L * 1024 * 1024
+        ? $"{bytes / (1024d * 1024 * 1024):0.0} GB"
+        : bytes >= 1024L * 1024 ? $"{bytes / (1024d * 1024):0.0} MB"
+        : bytes >= 1024 ? $"{bytes / 1024d:0} KB" : $"{bytes} B";
+    public string? FilePath { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string DurationDisplay => DurationSeconds is > 0
+        ? TimeSpan.FromSeconds(DurationSeconds.Value).ToString(DurationSeconds >= 3600 ? @"h\:mm\:ss" : @"m\:ss")
+        : "—";
 
     public double Progress
     {
@@ -56,3 +115,5 @@ public sealed class DownloadTrack : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
+
+public sealed record DownloadProgressInfo(double Percent, string Speed, long? DownloadedBytes, long? TotalBytes);
