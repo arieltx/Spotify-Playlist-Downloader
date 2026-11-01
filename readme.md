@@ -2,7 +2,7 @@
 
 **SpotiFetch** é um aplicativo desktop para Windows que organiza downloads de áudio a partir de links e metadados do Spotify. O projeto é a evolução do **Spotify Playlist Downloader (SPD)**, originalmente desenvolvido em Python e posteriormente reconstruído em C# com WPF.
 
-O repositório mantém as duas gerações: o SpotiFetch é o projeto principal e o código original do SPD está preservado em [`legacy/`](./legacy/).
+O repositório mantém as duas gerações: o SpotiFetch é o projeto principal e o código original do SPD está preservado em [`legacy/`](./legacy-SPD-python/).
 
 > **Status:** SpotiFetch é a versão atual em desenvolvimento. A versão Python está arquivada para preservar a história e a evolução do projeto.
 
@@ -74,7 +74,7 @@ Desenvolvido em Python, o SPD permitia converter e baixar músicas ou playlists 
 
 A partir da versão 3.3, o projeto passou por uma reestruturação para utilizar concorrência *multi-threading*, interface gráfica escura, logs em tempo real, barras de progresso e incorporação automática de metadados e capas.
 
-O código-fonte original está preservado em [`legacy/`](./legacy/). Esta seção documenta a geração histórica; suas instruções e dependências não se aplicam ao SpotiFetch atual.
+O código-fonte original está preservado em [`/legacy-SPD-python/`](./legacy-SPD-python/). Esta seção documenta a geração histórica; suas instruções e dependências não se aplicam ao SpotiFetch atual.
 
 ### 🖼️ Linha do tempo e evolução visual
 
@@ -83,7 +83,7 @@ O código-fonte original está preservado em [`legacy/`](./legacy/). Esta seçã
 A primeira geração contava com uma interface minimalista em coluna única, baseada nos componentes padrão do Tkinter, sem suporte a logs detalhados ou barras de progresso avançadas.
 
 <p align="center">
-  <img src="screenshots/v2s.png" width="45%" alt="Interface minimalista da versão V2s" />
+  <img src="./legacy-SPD-python/screenshots/v2s.png" width="45%" alt="Interface minimalista da versão V2s" />
 </p>
 
 #### ❌ Desafios de API — versões V3 iniciais
@@ -91,9 +91,9 @@ A primeira geração contava com uma interface minimalista em coluna única, bas
 Durante a transição para a arquitetura V3, o motor de requisições enfrentou instabilidades de autenticação, problemas de paginação e restrições de escopo de usuários, incluindo respostas HTTP 403 e erros de servidor.
 
 <p align="center">
-  <img src="screenshots/erro_403.png" width="32%" alt="Erro de escopo HTTP 403" />
-  <img src="screenshots/erro_autenticacao.png" width="32%" alt="Erro de autenticação" />
-  <img src="screenshots/erro_vazio.png" width="32%" alt="Erro de playlist vazia" />
+  <img src="./legacy-SPD-python/screenshots/erro_403.png" width="32%" alt="Erro de escopo HTTP 403" />
+  <img src="./legacy-SPD-python/screenshots/erro_autenticacao.png" width="32%" alt="Erro de autenticação" />
+  <img src="./legacy-SPD-python/screenshots/erro_vazio.png" width="32%" alt="Erro de playlist vazia" />
 </p>
 
 #### 🟢 Estabilização e modo escuro — versões V3.1 e V3.2
@@ -101,8 +101,8 @@ Durante a transição para a arquitetura V3, o motor de requisições enfrentou 
 Implementação de um fluxo estável de paginação de faixas e introdução das primeiras variantes de interface escura (*Dark HUD*), inicialmente focadas no monitoramento por caixas de texto.
 
 <p align="center">
-  <img src="screenshots/v3_funcionando.png" width="48%" alt="Versão V3 estável" />
-  <img src="screenshots/3.2.png" width="48%" alt="Interface HUD da versão V3.2" />
+  <img src="./legacy-SPD-python/screenshots/v3_funcionando.png" width="48%" alt="Versão V3 estável" />
+  <img src="./legacy-SPD-python/screenshots/3.2.png" width="48%" alt="Interface HUD da versão V3.2" />
 </p>
 
 #### 🔵 Evolução multimídia — versões V3.3 e V3.3.6 MT
@@ -110,14 +110,14 @@ Implementação de um fluxo estável de paginação de faixas e introdução das
 Evolução dos seletores visuais e construção de um painel multimídia com tabelas assíncronas e renderização de capas.
 
 <p align="center">
-  <img src="screenshots/3.3.1.png" width="48%" alt="Interface multimídia da versão V3.3" />
-  <img src="screenshots/3.3.6MT.png" width="48%" alt="Versão V3.3.6 com multi-threading" />
+  <img src="./legacy-SPD-python/screenshots/3.3.1.png" width="48%" alt="Interface multimídia da versão V3.3" />
+  <img src="./legacy-SPD-python/screenshots/3.3.6MT.png" width="48%" alt="Versão V3.3.6 com multi-threading" />
 </p>
 
 #### ⚡ Comparativo entre gerações
 
 <p align="center">
-  <img src="screenshots/comparativo.png" width="80%" alt="Comparativo visual entre gerações do SPD" />
+  <img src="./legacy-SPD-python/screenshots/comparativo.png" width="80%" alt="Comparativo visual entre gerações do SPD" />
 </p>
 
 ### Recursos da versão V3.3.7
@@ -200,5 +200,8 @@ O código legado do SPD e a versão atual do SpotiFetch fazem parte da evoluçã
 ## 👤 Créditos
 
 Criado e desenvolvido por [Arielx](https://github.com/arieltx).
+
+💬 **Discord:** [xeidisauu.](https://discord.com/users/1553862715443781657)
+
 
 O SpotiFetch atual foi desenvolvido com C#, WPF e .NET, com apoio de ferramentas de IA durante o processo de implementação e depuração. A concepção, direção do projeto, decisões de desenvolvimento, integração e testes são conduzidos pelo autor.

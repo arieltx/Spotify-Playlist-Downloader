@@ -21,7 +21,8 @@ public sealed class DownloadEngine
         Action<string>? statusChanged = null,
         Action<double>? progressChanged = null,
         bool useChromeCookies = false,
-        Action<DownloadProgressInfo>? telemetryChanged = null)
+        Action<DownloadProgressInfo>? telemetryChanged = null,
+        bool avoidLiveTracks = false)
     {
         var ytdlp = FindExecutable("yt-dlp.exe", "yt-dlp");
         if (ytdlp is null)
@@ -54,14 +55,14 @@ public sealed class DownloadEngine
             {
                 try
                 {
-                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies);
+                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies, avoidLiveTracks);
                 }
                 catch (InvalidOperationException ex) when (
                     useChromeCookies && ex.Message.Contains("Could not copy Chrome cookie database", StringComparison.OrdinalIgnoreCase))
                 {
                     statusChanged?.Invoke("Chrome está usando os cookies; tentando buscar sem autenticação do navegador");
                     useChromeCookies = false;
-                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies: false);
+                    input = await FindBestVideoAsync(ytdlp, track, cancellationToken, statusChanged, useChromeCookies: false, avoidLiveTracks: avoidLiveTracks);
                 }
             }
             cancellationToken.ThrowIfCancellationRequested();
@@ -164,7 +165,8 @@ public sealed class DownloadEngine
         detail.Contains("Could not copy Chrome cookie database", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<string> FindBestVideoAsync(
-        string ytdlp, DownloadTrack track, CancellationToken token, Action<string>? statusChanged, bool useChromeCookies)
+        string ytdlp, DownloadTrack track, CancellationToken token, Action<string>? statusChanged,
+        bool useChromeCookies, bool avoidLiveTracks)
     {
         statusChanged?.Invoke("Procurando a melhor correspondência de áudio");
         var query = string.Join(" ", new[] { track.Title, track.Artist }.Where(s => !string.IsNullOrWhiteSpace(s)));
@@ -184,7 +186,7 @@ public sealed class DownloadEngine
             start.ArgumentList.Add("--cookies-from-browser");
             start.ArgumentList.Add("chrome");
         }
-        start.ArgumentList.Add($"ytsearch5:{query}");
+        start.ArgumentList.Add($"ytsearch{(avoidLiveTracks ? 10 : 5)}:{query}");
 
         using var process = new Process { StartInfo = start };
         process.Start();
@@ -209,8 +211,17 @@ public sealed class DownloadEngine
                 var entries = document.RootElement.TryGetProperty("entries", out var list) && list.ValueKind == JsonValueKind.Array
                     ? list.EnumerateArray().ToArray()
                     : [document.RootElement];
-                var best = entries
+                var listedCandidates = entries
                     .Where(entry => entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty("id", out _))
+                    .ToArray();
+                var candidates = listedCandidates
+                    .Where(entry => !avoidLiveTracks || !IsLiveCandidate(entry))
+                    .ToArray();
+                if (avoidLiveTracks && listedCandidates.Length > 0 && candidates.Length == 0)
+                    throw new InvalidOperationException($"Só encontrei versões ao vivo para {track.Title}. Desative 'Evitar músicas ao vivo' nas configurações se quiser baixar uma delas.");
+                if (avoidLiveTracks && candidates.Length == 0)
+                    throw new InvalidOperationException($"Não encontrei um resultado confiável para {track.Title}. Desative 'Evitar músicas ao vivo' nas configurações para permitir a busca antiga.");
+                var best = candidates
                     .Select(entry => (Entry: entry, Score: ScoreCandidate(entry, track)))
                     .OrderByDescending(result => result.Score)
                     .FirstOrDefault();
@@ -226,7 +237,26 @@ public sealed class DownloadEngine
         }
         if (!string.IsNullOrWhiteSpace(diagnostic) && process.ExitCode != 0)
             throw new InvalidOperationException(FormatYtDlpError(diagnostic));
+        if (avoidLiveTracks)
+            throw new InvalidOperationException($"Não consegui confirmar uma versão de estúdio para {track.Title}. Desative 'Evitar músicas ao vivo' nas configurações para permitir outros resultados.");
         return $"ytsearch1:{query}";
+    }
+
+    private static readonly Regex LiveTitlePattern = new(
+        @"(?:\((?:[^)]*\b(?:live|ao vivo)\b[^)]*)\)|\[(?:[^\]]*\b(?:live|ao vivo)\b[^\]]*)\]|\b(?:ao vivo|vers[aã]o ao vivo|grava[cç][aã]o ao vivo)\b|\blive\s+(?:at|from|in|version|session|performance|concert)\b|\blive$)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static bool IsLiveCandidate(JsonElement candidate)
+    {
+        if (candidate.TryGetProperty("is_live", out var liveFlag) && liveFlag.ValueKind == JsonValueKind.True)
+            return true;
+        if (candidate.TryGetProperty("live_status", out var liveStatus) && liveStatus.ValueKind == JsonValueKind.String &&
+            liveStatus.GetString() is "is_live" or "is_upcoming" or "was_live")
+            return true;
+        var title = candidate.TryGetProperty("title", out var titleValue) && titleValue.ValueKind == JsonValueKind.String
+            ? titleValue.GetString() ?? ""
+            : "";
+        return LiveTitlePattern.IsMatch(title);
     }
 
     private static string FormatYtDlpError(string detail)

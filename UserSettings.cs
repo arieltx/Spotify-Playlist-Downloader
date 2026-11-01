@@ -11,6 +11,8 @@ public sealed class UserSettings
     public int MaxWorkers { get; set; } = 4; // threads de download
     public bool SkipExisting { get; set; } = true; // pular musicas existentes, padrão true
     public bool UseChromeCookies { get; set; } = false; //padrao false
+    public bool AvoidLiveTracks { get; set; } = true;
+    public bool DiscordPresenceEnabled { get; set; } = true;
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

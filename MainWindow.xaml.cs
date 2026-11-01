@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
@@ -12,6 +13,7 @@ using System.Security.Cryptography;
 using System.Windows.Media.Imaging;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Interop;
 using Windows.Media;
 using Windows.Storage;
@@ -26,6 +28,7 @@ public sealed record PlayerPlaylistOption(string Name, string? DirectoryPath);
 
 public partial class MainWindow : Window
 {
+    private const string DiscordApplicationId = "1566458570340442245";
     private const int DwmwaUseImmersiveDarkMode = 20;
     private const int DwmwaUseImmersiveDarkModeLegacy = 19;
 
@@ -37,10 +40,12 @@ public partial class MainWindow : Window
     public ObservableCollection<DownloadTrack> CompletedHistory { get; } = [];
     public ObservableCollection<PlayerPlaylistOption> PlayerPlaylists { get; } = [];
     public ObservableCollection<DownloadTrack> PlayerTracks { get; } = [];
+    private ICollectionView? _playerTracksView;
 
     private readonly UserSettings _settings;
     private readonly SpotifyEmbedClient _spotify = new();
     private readonly DownloadEngine _downloader = new();
+    private readonly DiscordPresenceService _discordPresence = new();
     private CancellationTokenSource? _operationCancellation;
     private bool _initializing = true;
     private bool _busy;
@@ -61,7 +66,11 @@ public partial class MainWindow : Window
     private bool _playerPaused = true;
     private bool _refreshingPlayerLibrary;
     private bool _playerSeeking;
+    private bool _miniPlayerSeeking;
     private bool _playerMuted;
+    private bool _shuffleEnabled;
+    private int _repeatMode;
+    private string _playerSearchQuery = "";
     private double _previousPlayerVolume = 0.8;
     private SystemMediaTransportControls? _systemMediaControls;
     private static string HistoryFilePath => Path.Combine(
@@ -91,6 +100,8 @@ public partial class MainWindow : Window
         _settings.MaxWorkers = Math.Clamp(_settings.MaxWorkers, 1, 32);
         SkipExistingCheckBox.IsChecked = _settings.SkipExisting;
         UseChromeCookiesCheckBox.IsChecked = _settings.UseChromeCookies;
+        AvoidLiveCheckBox.IsChecked = _settings.AvoidLiveTracks;
+        DiscordPresenceCheckBox.IsChecked = _settings.DiscordPresenceEnabled;
         WorkersSlider.Value = _settings.MaxWorkers;
         WorkersValueText.Text = $"{_settings.MaxWorkers} thread{(_settings.MaxWorkers == 1 ? "" : "s")}";
         var workerPresets = new[] { 1, 4, 6, 8, 16 };
@@ -109,7 +120,9 @@ public partial class MainWindow : Window
         DetailBitrateSummary.Text = $"{_settings.Bitrate} kbps";
         CompletedGrid.ItemsSource = CompletedHistory;
         PlayerPlaylistSelector.ItemsSource = PlayerPlaylists;
-        PlayerTrackList.ItemsSource = PlayerTracks;
+        _playerTracksView = CollectionViewSource.GetDefaultView(PlayerTracks);
+        _playerTracksView.Filter = FilterPlayerTrack;
+        PlayerTrackList.ItemsSource = _playerTracksView;
         RefreshPlayerLibrary();
         _playerTimer.Tick += PlayerTimer_Tick;
         _playerTimer.Start();
@@ -121,6 +134,7 @@ public partial class MainWindow : Window
             _playerTimer.Stop();
             PlayerMedia.Stop();
             PlayerMedia.Close();
+            _ = _discordPresence.DisposeAsync();
             if (_systemMediaControls is not null)
             {
                 _systemMediaControls.ButtonPressed -= SystemMediaControls_ButtonPressed;
@@ -136,7 +150,8 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 return;
             }
-            if (PlayerPage.Visibility != Visibility.Visible || Keyboard.FocusedElement is TextBox or ComboBox or Slider) return;
+            if (Keyboard.FocusedElement is TextBox or ComboBox or Slider or Button) return;
+            if (PlayerPage.Visibility != Visibility.Visible && _currentPlayerTrack is null) return;
 
             var control = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
             if (e.Key == Key.Space || e.Key == Key.MediaPlayPause)
@@ -248,6 +263,34 @@ public partial class MainWindow : Window
         catch
         {
             // A falha do painel de mídia do Windows não pode interromper o player do app.
+        }
+    }
+
+    private async Task UpdateDiscordPresenceAsync(DownloadTrack track)
+    {
+        if (!_settings.DiscordPresenceEnabled)
+        {
+            await _discordPresence.ClearAsync();
+            return;
+        }
+
+        try
+        {
+            var duration = PlayerMedia.NaturalDuration.HasTimeSpan
+                ? PlayerMedia.NaturalDuration.TimeSpan
+                : TimeSpan.Zero;
+            await _discordPresence.UpdateAsync(
+                DiscordApplicationId,
+                track.Title,
+                track.Artist,
+                track.ArtworkUrl,
+                PlayerMedia.Position,
+                duration,
+                !_playerPaused);
+        }
+        catch (Exception ex)
+        {
+            AddTechnicalLog($"Discord Rich Presence indisponível: {ex.Message}");
         }
     }
 
@@ -511,7 +554,7 @@ public partial class MainWindow : Window
                         if (telemetry.TotalBytes is > 0) track.FileSizeBytes = telemetry.TotalBytes;
                         UpdateAggregateSpeed(queue);
                         if (ReferenceEquals(DownloadsGrid.SelectedItem, track)) RefreshTrackDetails(track);
-                    }));
+                    }), _settings.AvoidLiveTracks);
                 await OnUiAsync(() =>
                 {
                     track.Status = "Concluído"; track.Progress = 100; track.Speed = "—";
@@ -820,6 +863,28 @@ public partial class MainWindow : Window
             : "Cookies do Chrome desativados.");
     }
 
+    private void AvoidLive_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_initializing) return;
+        _settings.AvoidLiveTracks = AvoidLiveCheckBox.IsChecked == true;
+        SaveSettings();
+        AddLog(_settings.AvoidLiveTracks
+            ? "Filtro para evitar gravações ao vivo ativado."
+            : "Filtro para evitar gravações ao vivo desativado.");
+    }
+
+    private async void DiscordPresenceSetting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing) return;
+        _settings.DiscordPresenceEnabled = DiscordPresenceCheckBox.IsChecked == true;
+        SaveSettings();
+
+        if (_currentPlayerTrack is not null)
+            await UpdateDiscordPresenceAsync(_currentPlayerTrack);
+        else if (!_settings.DiscordPresenceEnabled)
+            await _discordPresence.ClearAsync();
+    }
+
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
         var cancellation = _operationCancellation;
@@ -997,9 +1062,23 @@ public partial class MainWindow : Window
             : selectedTracks.OrderBy(track => track.Number).ThenBy(track => track.CompletedAt ?? DateTime.MinValue).ToList();
         PlayerTracks.Clear();
         foreach (var track in ordered) PlayerTracks.Add(track);
+        _playerTracksView?.Refresh();
         PlayerLibrarySummary.Text = $"{PlayerTracks.Count} {(PlayerTracks.Count == 1 ? "música disponível" : "músicas disponíveis")}";
         PlayerTrackList.SelectedItem = _currentPlayerTrack is not null && PlayerTracks.Contains(_currentPlayerTrack)
             ? _currentPlayerTrack : null;
+    }
+
+    private bool FilterPlayerTrack(object item)
+    {
+        if (item is not DownloadTrack track || string.IsNullOrWhiteSpace(_playerSearchQuery)) return true;
+        return new[] { track.Title, track.Artist, track.Album }
+            .Any(value => value.Contains(_playerSearchQuery, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    private void PlayerSearch_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _playerSearchQuery = PlayerSearchBox.Text.Trim();
+        _playerTracksView?.Refresh();
     }
 
     private void PlayerTrackList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1022,9 +1101,15 @@ public partial class MainWindow : Window
         PlayerCurrentTitle.Text = track.Title;
         PlayerCurrentArtist.Text = track.Artist;
         PlayerCurrentAlbum.Text = string.IsNullOrWhiteSpace(track.Album) ? "" : track.Album;
+        MiniPlayerTitle.Text = track.Title;
+        MiniPlayerArtist.Text = track.Artist;
+        MiniPlayerBar.Visibility = Visibility.Visible;
         PlayerPositionText.Text = "0:00";
+        MiniPlayerPositionText.Text = "0:00";
         PlayerDurationText.Text = track.DurationDisplay == "—" ? "0:00" : track.DurationDisplay;
+        MiniPlayerDurationText.Text = PlayerDurationText.Text;
         PlayerSeekSlider.Value = 0;
+        MiniPlayerSeekSlider.Value = 0;
         PlayerStatusText.Text = "Carregando música…";
         _playerPaused = false;
         SetPlayerPlayPauseIcon(playing: true);
@@ -1040,6 +1125,9 @@ public partial class MainWindow : Window
         PlayerCoverImage.Source = null;
         PlayerCoverImage.Visibility = Visibility.Collapsed;
         PlayerCoverFallback.Visibility = Visibility.Visible;
+        MiniPlayerCoverImage.Source = null;
+        MiniPlayerCoverImage.Visibility = Visibility.Collapsed;
+        MiniPlayerCoverFallback.Visibility = Visibility.Visible;
         if (!Uri.TryCreate(track.ArtworkUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return;
         try
         {
@@ -1055,6 +1143,9 @@ public partial class MainWindow : Window
             PlayerCoverImage.Source = image;
             PlayerCoverImage.Visibility = Visibility.Visible;
             PlayerCoverFallback.Visibility = Visibility.Collapsed;
+            MiniPlayerCoverImage.Source = image;
+            MiniPlayerCoverImage.Visibility = Visibility.Visible;
+            MiniPlayerCoverFallback.Visibility = Visibility.Collapsed;
         }
         catch { /* A capa é opcional; a música local deve tocar mesmo sem rede. */ }
     }
@@ -1078,6 +1169,7 @@ public partial class MainWindow : Window
             SetPlayerPlayPauseIcon(playing: true);
             PlayerStatusText.Text = "Tocando";
             if (_currentPlayerTrack is not null) UpdateSystemMediaSession(_currentPlayerTrack, MediaPlaybackStatus.Playing);
+            if (_currentPlayerTrack is not null) _ = UpdateDiscordPresenceAsync(_currentPlayerTrack);
         }
         else
         {
@@ -1086,14 +1178,48 @@ public partial class MainWindow : Window
             SetPlayerPlayPauseIcon(playing: false);
             PlayerStatusText.Text = "Pausado";
             if (_currentPlayerTrack is not null) UpdateSystemMediaSession(_currentPlayerTrack, MediaPlaybackStatus.Paused);
+            if (_currentPlayerTrack is not null) _ = UpdateDiscordPresenceAsync(_currentPlayerTrack);
         }
     }
 
-    private void PlayNextTrack()
+    private DownloadTrack[] CurrentPlayerSequence() =>
+        _playerTracksView?.Cast<DownloadTrack>().ToArray() ?? PlayerTracks.ToArray();
+
+    private void PlayNextTrack(bool automatic = false)
     {
-        if (PlayerTracks.Count == 0) return;
-        var index = _currentPlayerTrack is null ? -1 : PlayerTracks.IndexOf(_currentPlayerTrack);
-        var next = PlayerTracks[(index + 1 + PlayerTracks.Count) % PlayerTracks.Count];
+        var sequence = CurrentPlayerSequence();
+        if (sequence.Length == 0)
+        {
+            if (automatic)
+            {
+                _playerPaused = true;
+                SetPlayerPlayPauseIcon(playing: false);
+                PlayerStatusText.Text = "Concluído";
+                if (_currentPlayerTrack is not null) UpdateSystemMediaSession(_currentPlayerTrack, MediaPlaybackStatus.Stopped);
+                _ = _discordPresence.ClearAsync();
+            }
+            return;
+        }
+        var index = _currentPlayerTrack is null ? -1 : Array.IndexOf(sequence, _currentPlayerTrack);
+        DownloadTrack next;
+        if (_shuffleEnabled && sequence.Length > 1)
+        {
+            var candidates = sequence.Where(track => !ReferenceEquals(track, _currentPlayerTrack)).ToArray();
+            next = candidates[Random.Shared.Next(candidates.Length)];
+        }
+        else
+        {
+            if (automatic && _repeatMode == 0 && index >= sequence.Length - 1)
+            {
+                _playerPaused = true;
+                SetPlayerPlayPauseIcon(playing: false);
+                PlayerStatusText.Text = "Concluído";
+                UpdateSystemMediaSession(_currentPlayerTrack!, MediaPlaybackStatus.Stopped);
+                _ = _discordPresence.ClearAsync();
+                return;
+            }
+            next = sequence[(index + 1 + sequence.Length) % sequence.Length];
+        }
         _refreshingPlayerLibrary = true;
         PlayerTrackList.SelectedItem = next;
         _refreshingPlayerLibrary = false;
@@ -1102,14 +1228,15 @@ public partial class MainWindow : Window
 
     private void PlayPreviousTrack()
     {
-        if (PlayerTracks.Count == 0) return;
+        var sequence = CurrentPlayerSequence();
+        if (sequence.Length == 0) return;
         if (PlayerMedia.Source is not null && PlayerMedia.Position.TotalSeconds > 3)
         {
             PlayerMedia.Position = TimeSpan.Zero;
             return;
         }
-        var index = _currentPlayerTrack is null ? 0 : PlayerTracks.IndexOf(_currentPlayerTrack);
-        var previous = PlayerTracks[(index - 1 + PlayerTracks.Count) % PlayerTracks.Count];
+        var index = _currentPlayerTrack is null ? 0 : Array.IndexOf(sequence, _currentPlayerTrack);
+        var previous = sequence[(index - 1 + sequence.Length) % sequence.Length];
         _refreshingPlayerLibrary = true;
         PlayerTrackList.SelectedItem = previous;
         _refreshingPlayerLibrary = false;
@@ -1119,6 +1246,28 @@ public partial class MainWindow : Window
     private void PlayerPlayPause_Click(object sender, RoutedEventArgs e) => TogglePlayerPlayback();
     private void PlayerNext_Click(object sender, RoutedEventArgs e) => PlayNextTrack();
     private void PlayerPrevious_Click(object sender, RoutedEventArgs e) => PlayPreviousTrack();
+
+    private void PlayerShuffle_Click(object sender, RoutedEventArgs e)
+    {
+        _shuffleEnabled = !_shuffleEnabled;
+        PlayerShuffleButton.IsChecked = _shuffleEnabled;
+        MiniPlayerShuffleButton.IsChecked = _shuffleEnabled;
+        var state = _shuffleEnabled ? "ativado" : "desativado";
+        PlayerShuffleButton.ToolTip = MiniPlayerShuffleButton.ToolTip = $"Reprodução aleatória {state}";
+    }
+
+    private void PlayerRepeat_Click(object sender, RoutedEventArgs e)
+    {
+        _repeatMode = (_repeatMode + 1) % 3;
+        var label = _repeatMode switch { 1 => "Repetir playlist", 2 => "Repetir música", _ => "Repetição desligada" };
+        var icon = _repeatMode == 2 ? "↻¹" : "↻";
+        PlayerRepeatButton.Content = icon;
+        MiniPlayerRepeatButton.Content = icon;
+        PlayerRepeatButton.IsChecked = MiniPlayerRepeatButton.IsChecked = _repeatMode != 0;
+        PlayerRepeatButton.ToolTip = MiniPlayerRepeatButton.ToolTip = label;
+    }
+
+    private void PlayerOpen_Click(object sender, RoutedEventArgs e) => ShowPage(PlayerPage, NavPlayer);
 
     private void PlayerMute_Click(object sender, RoutedEventArgs e)
     {
@@ -1136,6 +1285,11 @@ public partial class MainWindow : Window
         if (PlayerMedia is null || PlayerVolumeText is null) return;
         PlayerMedia.Volume = Math.Clamp(e.NewValue, 0, 1);
         PlayerVolumeText.Text = $"{(int)Math.Round(e.NewValue * 100)}%";
+        MiniPlayerVolumeText.Text = PlayerVolumeText.Text;
+        if (!ReferenceEquals(sender, PlayerVolumeSlider) && Math.Abs(PlayerVolumeSlider.Value - e.NewValue) > 0.001)
+            PlayerVolumeSlider.Value = e.NewValue;
+        if (!ReferenceEquals(sender, MiniPlayerVolumeSlider) && Math.Abs(MiniPlayerVolumeSlider.Value - e.NewValue) > 0.001)
+            MiniPlayerVolumeSlider.Value = e.NewValue;
         _playerMuted = e.NewValue <= 0.001;
         if (!_playerMuted) _previousPlayerVolume = e.NewValue;
         if (PlayerVolumeIcon is not null)
@@ -1151,24 +1305,35 @@ public partial class MainWindow : Window
         var duration = PlayerMedia.NaturalDuration.TimeSpan;
         var position = PlayerMedia.Position;
         if (!_playerSeeking) PlayerSeekSlider.Value = Math.Clamp(position.TotalSeconds, 0, Math.Max(1, duration.TotalSeconds));
+        if (!_miniPlayerSeeking) MiniPlayerSeekSlider.Value = Math.Clamp(position.TotalSeconds, 0, Math.Max(1, duration.TotalSeconds));
         PlayerPositionText.Text = FormatPlayerTime(position);
+        MiniPlayerPositionText.Text = PlayerPositionText.Text;
         PlayerDurationText.Text = FormatPlayerTime(duration);
+        MiniPlayerDurationText.Text = PlayerDurationText.Text;
     }
 
     private void PlayerMedia_MediaOpened(object sender, RoutedEventArgs e)
     {
         if (!PlayerMedia.NaturalDuration.HasTimeSpan) return;
         PlayerSeekSlider.Maximum = Math.Max(1, PlayerMedia.NaturalDuration.TimeSpan.TotalSeconds);
+        MiniPlayerSeekSlider.Maximum = PlayerSeekSlider.Maximum;
         PlayerDurationText.Text = FormatPlayerTime(PlayerMedia.NaturalDuration.TimeSpan);
+        MiniPlayerDurationText.Text = PlayerDurationText.Text;
         PlayerStatusText.Text = _playerPaused ? "Pausado" : "Tocando";
+        if (_currentPlayerTrack is not null) _ = UpdateDiscordPresenceAsync(_currentPlayerTrack);
     }
 
     private void PlayerMedia_MediaEnded(object sender, RoutedEventArgs e)
     {
-        if (PlayerTracks.Count > 1) { PlayNextTrack(); return; }
-        _playerPaused = true;
-        SetPlayerPlayPauseIcon(playing: false);
-        PlayerStatusText.Text = "Concluído";
+        if (_repeatMode == 2 && _currentPlayerTrack is not null)
+        {
+            // Reopen the same local file so the decoder reliably starts at zero.
+            PlayPlayerTrack(_currentPlayerTrack);
+            return;
+        }
+        // Normal playback advances through the selected library too; repeat-all
+        // wraps at the end and shuffle chooses another track.
+        PlayNextTrack(automatic: true);
     }
 
     private void PlayerMedia_MediaFailed(object sender, ExceptionRoutedEventArgs e)
@@ -1176,25 +1341,46 @@ public partial class MainWindow : Window
         _playerPaused = true;
         SetPlayerPlayPauseIcon(playing: false);
         PlayerStatusText.Text = "Não foi possível reproduzir este arquivo";
+        _ = _discordPresence.ClearAsync();
         if (e.ErrorException is not null) AddTechnicalLog($"Falha no player local: {e.ErrorException}");
     }
 
-    private void PlayerSeekStart(object sender, MouseButtonEventArgs e) => _playerSeeking = true;
-    private void PlayerSeekEnd(object sender, MouseButtonEventArgs e) { _playerSeeking = false; SeekPlayerToSlider(); }
-    private void PlayerSeekKeyUp(object sender, KeyEventArgs e) => SeekPlayerToSlider();
+    private void PlayerSeekStart(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(sender, MiniPlayerSeekSlider)) _miniPlayerSeeking = true;
+        else _playerSeeking = true;
+    }
 
-    private void SeekPlayerToSlider()
+    private void PlayerSeekEnd(object sender, MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(sender, MiniPlayerSeekSlider)) _miniPlayerSeeking = false;
+        else _playerSeeking = false;
+        if (sender is Slider slider) SeekPlayerToSlider(slider);
+    }
+
+    private void PlayerSeekKeyUp(object sender, KeyEventArgs e)
+    {
+        if (sender is Slider slider) SeekPlayerToSlider(slider);
+    }
+
+    private void SeekPlayerToSlider(Slider slider)
     {
         if (PlayerMedia.Source is null || !PlayerMedia.NaturalDuration.HasTimeSpan) return;
-        var seconds = Math.Clamp(PlayerSeekSlider.Value, 0, PlayerMedia.NaturalDuration.TimeSpan.TotalSeconds);
+        var seconds = Math.Clamp(slider.Value, 0, PlayerMedia.NaturalDuration.TimeSpan.TotalSeconds);
         PlayerMedia.Position = TimeSpan.FromSeconds(seconds);
-        PlayerPositionText.Text = FormatPlayerTime(PlayerMedia.Position);
+        var position = FormatPlayerTime(PlayerMedia.Position);
+        PlayerPositionText.Text = position;
+        MiniPlayerPositionText.Text = position;
+        if (!ReferenceEquals(slider, PlayerSeekSlider)) PlayerSeekSlider.Value = seconds;
+        if (!ReferenceEquals(slider, MiniPlayerSeekSlider)) MiniPlayerSeekSlider.Value = seconds;
+        if (_currentPlayerTrack is not null) _ = UpdateDiscordPresenceAsync(_currentPlayerTrack);
     }
 
     private void SetPlayerPlayPauseIcon(bool playing)
     {
         if (PlayerPlayPauseIcon is null) return;
         PlayerPlayPauseIcon.Data = (System.Windows.Media.Geometry)FindResource(playing ? "PlayerPauseIcon" : "PlayerPlayIcon");
+        MiniPlayerPlayPauseIcon.Data = PlayerPlayPauseIcon.Data;
         PlayerPlayPauseButton.ToolTip = playing ? "Pausar · Espaço" : "Reproduzir · Espaço";
     }
 
